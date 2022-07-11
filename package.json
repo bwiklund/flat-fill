@@ -25,6 +25,7 @@
     "@types/react": "^18.0.15",
     "@types/react-dom": "^18.0.6",
     "@types/react-fontawesome": "^1.6.5",
+    "bitmap-sdf": "^1.0.4",
     "customize-cra": "^1.0.0",
     "koa": "^2.13.4",
     "koa-bodyparser": "^4.3.0",

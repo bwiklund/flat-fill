@@ -1,6 +1,7 @@
 import React from "react";
 import styled from "@emotion/styled";
-import lofi from "./lofi.jpg";
+// import lofi from "./lofi.jpg";
+import lofi from "./lofi_cleaner.png";
 import { flatter } from "./lib/flatter";
 
 const Wrap = styled.div`

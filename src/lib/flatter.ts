@@ -1,5 +1,6 @@
-import { times } from "lodash";
-import { vec, Vec } from "./vec";
+import { Vec } from "./vec";
+//@ts-ignore
+import calcSdf from "bitmap-sdf";
 
 interface Pigment {
   pos: Vec;
@@ -23,6 +24,21 @@ export function flatter(img: HTMLImageElement) {
   ctx.drawImage(img, 0, 0);
   let imdata = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
+  //calculate distances
+  let distances = calcSdf(canvas, { cutoff: 1, radius: 100 });
+
+  //show distances
+  let imgArr = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w; i++) {
+    for (let j = 0; j < h; j++) {
+      imgArr[j * w * 4 + i * 4 + 0] = distances[j * w + i] * 255;
+      imgArr[j * w * 4 + i * 4 + 1] = distances[j * w + i] * 255;
+      imgArr[j * w * 4 + i * 4 + 2] = distances[j * w + i] * 255;
+      imgArr[j * w * 4 + i * 4 + 3] = 255;
+    }
+  }
+  var sdfDebugImage = new ImageData(imgArr, w, h);
+
   // do the work, grow the pigments and merge ones that overlap without hitting lines first
 
   for (var i = 0; i < w * h; i++) {
@@ -37,11 +53,12 @@ export function flatter(img: HTMLImageElement) {
     imdata.data[I + 3] = 255;
   }
 
-  ctx.putImageData(imdata, 0, 0);
+  // ctx.putImageData(imdata, 0, 0);
+  ctx.putImageData(sdfDebugImage, 0, 0);
 
   // draw the flatted version. actually return both canvases so the user can toggle it
   ctx.globalCompositeOperation = "multiply";
-  ctx.drawImage(img, 0, 0);
+  // ctx.drawImage(img, 0, 0);
 
   return canvas;
 }
