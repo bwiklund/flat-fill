@@ -60,7 +60,7 @@ export function flatter(img: HTMLImageElement) {
 
   // memorize times that clumps of pixels meet that should be the same color,
   // so we can merge them efficiently at the very end, instead of having to keep bucket filling them as we go
-  let sameColorSets: number[][] = [];
+  let idxRemap: Record<number, number> = {};
 
   let idxPainting = new Uint32Array(w * h);
   let nextColorIdx = 1;
@@ -86,15 +86,18 @@ export function flatter(img: HTMLImageElement) {
       }
     }
 
-    let gapSize = 5;
+    let gapSize = -0.1;
     var isntUnderGapThreshold = dist > gapSize;
+    var largestIdx = Math.max(...foundNeighbors);
     if (foundNeighbors.length >= 2 && isntUnderGapThreshold) {
-      sameColorSets.push(foundNeighbors);
+      for (var neightborIdx of foundNeighbors) {
+        // by always mapping to a larger idx we can traverse this more efficiently later
+        if (neightborIdx !== largestIdx) idxRemap[neightborIdx] = largestIdx;
+      }
     }
 
     // this works for pixels that happen to start next to each other, but we also need a mapping of same colors for groups that collide
-    idxPainting[idx] =
-      foundNeighbors.length > 0 ? foundNeighbors[0] : nextColorIdx++;
+    idxPainting[idx] = foundNeighbors.length > 0 ? largestIdx : nextColorIdx++;
     // idxPainting[idx] = found ? anyNeighborColor : i * maxIdx / idxInOrder.length;
   }
 
@@ -106,12 +109,21 @@ export function flatter(img: HTMLImageElement) {
   //   }
   // }
 
+  // we have to recursively look through the replacement idx thing so this memoizes it
+  // var finalLookup: Record<number, number> = {};
+  function getFinalColorIdx(idx: number): number {
+    if (!idxRemap[idx]) return 0;
+
+    var replace = /*finalLookup[idx] ||*/ idxRemap[idx];
+    return Math.max(getFinalColorIdx(replace) || replace);
+  }
+
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let idx = y * w + x;
       let I = 4 * idx;
-      let paintIdx = idxPainting[y * w + x];
-      // paintIdx = idxRemap[paintIdx] || paintIdx;
+      // let paintIdx = idxPainting[y * w + x];
+      let paintIdx = getFinalColorIdx(idxPainting[y * w + x]);
       imdata.data[I + 0] = rand(paintIdx + 0.1) * 127 + 127;
       imdata.data[I + 1] = rand(paintIdx + 0.2) * 127 + 127;
       imdata.data[I + 2] = rand(paintIdx + 0.3) * 127 + 127;
@@ -125,6 +137,8 @@ export function flatter(img: HTMLImageElement) {
   // draw the flatted version. actually return both canvases so the user can toggle it
   ctx.globalCompositeOperation = "multiply";
   ctx.drawImage(img, 0, 0);
+
+  console.log("done");
 
   return canvas;
 }
