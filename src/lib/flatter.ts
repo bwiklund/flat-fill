@@ -10,8 +10,8 @@ import { rand } from "./mutil";
 // if you hit a pixel that's already been colored in, stop, and change all your pixels to that color. OR, if this gives bad results, leave it as is, then merge the colors in another more tunable pass
 
 export function flatter(img: HTMLImageElement) {
-  let radius = 100;
-  let gapSizePixels = 2;
+  let radius = Math.sqrt(img.width * img.width + img.height * img.height) / 2;
+  let gapSizePixels = 2.5;
   let gapSize01 = gapSizePixels / radius;
 
   let start = performance.now();
@@ -23,14 +23,27 @@ export function flatter(img: HTMLImageElement) {
     lap = t2;
   }
 
-  let lineartCanvas = document.createElement("canvas");
-  let w = (lineartCanvas.width = img.width);
-  let h = (lineartCanvas.height = img.height);
-  lineartCanvas.getContext("2d")!.drawImage(img, 0, 0);
+  let lineartCanvasOriginal = document.createElement("canvas");
+  let w = (lineartCanvasOriginal.width = img.width);
+  let h = (lineartCanvasOriginal.height = img.height);
+  lineartCanvasOriginal.getContext("2d")!.drawImage(img, 0, 0);
 
-  doLap("create canvas");
+  let lineartCanvas = document.createElement("canvas");
+  lineartCanvas.width = img.width;
+  lineartCanvas.height = img.height;
+  lineartCanvas.getContext("2d")!.drawImage(img, 0, 0);
+  threshold(lineartCanvas, w, h, 128, false);
+
+  let inverseLineArtCanvas = document.createElement("canvas");
+  inverseLineArtCanvas.width = img.width;
+  inverseLineArtCanvas.height = img.height;
+  inverseLineArtCanvas.getContext("2d")!.drawImage(img, 0, 0);
+  threshold(inverseLineArtCanvas, w, h, 128, true);
+
+  doLap("create canvases");
 
   let distances = calcSdf(lineartCanvas, { cutoff: 1, radius });
+  let distancesInverse = calcSdf(inverseLineArtCanvas, { cutoff: 1, radius });
 
   doLap("calculate SDF");
 
@@ -122,14 +135,6 @@ export function flatter(img: HTMLImageElement) {
 
   doLap("traverse all pixels");
 
-  // let finalColorLookup = times(nextColorIdx).map((n) => n + 1);
-  // for (let set of sameColorSets) {
-  //   let c = set[0];
-  //   for (let idx of set) {
-  //     c = set[idx];
-  //   }
-  // }
-
   console.log("remap needed #: " + Object.keys(remap).length);
 
   // this is tricky, because order can be weird. if we say a color is remapped, we gotta also traverse this data structure to the farthest leaf it's ALREADY possibly been remapped to, or island will not meet correctly all the time
@@ -147,19 +152,7 @@ export function flatter(img: HTMLImageElement) {
     return getFinalColorIdx(remap[idx]);
   }
 
-  // let finalIdxToRealColor: Record<number, number> = [];
-  // for (let y = 0; y < h; y++) {
-  //   for (let x = 0; x < w; x++) {
-  //     let paintIdx = getFinalColorIdx(idxPainting[y * w + x]);
-  //     finalIdxToRealColor[paintIdx] = Math.max(
-  //       finalIdxToRealColor[paintIdx] || 0,
-  //       Math.sqrt(1 - mag(vec(x - w / 2, y)) / (w + h)),
-  //     );
-  //   }
-  // }
-
   // ok so an untapped benefit of this method is that, because of the SDF, you know what the largest (well, widest) portion of any color is. so you can use that to modify the gap tolerance. big areas can allow larger gap closing, while small ones tolerate less.
-  //
 
   let flatCanvas = document.createElement("canvas");
   flatCanvas.width = img.width;
@@ -184,15 +177,6 @@ export function flatter(img: HTMLImageElement) {
       flatImgData.data[I + 1] = ~~(rand(paintIdx + 0.11) * 100 + 155);
       flatImgData.data[I + 2] = ~~(rand(paintIdx + 0.111) * 100 + 155);
       flatImgData.data[I + 3] = 255;
-      // imdata.data[I + 0] = (paintIdx / nextColorIdx) * 255;
-      // imdata.data[I + 1] = (paintIdx / nextColorIdx) * 255;
-      // imdata.data[I + 2] = (paintIdx / nextColorIdx) * 255;
-
-      // let clr = finalIdxToRealColor[paintIdx];
-      // imdata.data[I + 0] = clr * 255;
-      // imdata.data[I + 1] = clr * 255;
-      // imdata.data[I + 2] = clr * 255;
-      // imdata.data[I + 3] = 255;
     }
   }
   flatCtx.putImageData(flatImgData, 0, 0);
@@ -207,5 +191,28 @@ export function flatter(img: HTMLImageElement) {
       Object.keys(finalColorsUsed).length,
   );
 
-  return { flats: flatCanvas, lineArt: lineartCanvas };
+  return { flats: flatCanvas, lineArt: lineartCanvasOriginal };
+}
+
+function threshold(
+  canvas: HTMLCanvasElement,
+  w: number,
+  h: number,
+  threshold: number,
+  flip: boolean,
+) {
+  let invCtx = canvas.getContext("2d")!;
+  let invData = invCtx.getImageData(0, 0, canvas.width, canvas.height);
+  var data = invData.data;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      var I = 4 * (j * w + i);
+      var thresh = invData.data[I]; // red good enough
+      invData.data[I + 0] = thresh > threshold !== flip ? 255 : 0;
+      invData.data[I + 1] = thresh > threshold !== flip ? 255 : 0;
+      invData.data[I + 2] = thresh > threshold !== flip ? 255 : 0;
+      invData.data[I + 3] = 255;
+    }
+  }
+  invCtx.putImageData(invData, 0, 0);
 }
