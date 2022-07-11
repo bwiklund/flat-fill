@@ -10,6 +10,10 @@ import { rand } from "./mutil";
 // if you hit a pixel that's already been colored in, stop, and change all your pixels to that color. OR, if this gives bad results, leave it as is, then merge the colors in another more tunable pass
 
 export function flatter(img: HTMLImageElement) {
+  let radius = 100;
+  let gapSizePixels = 2;
+  let gapSize01 = gapSizePixels / radius;
+
   let start = performance.now();
   let lap = start;
 
@@ -19,17 +23,14 @@ export function flatter(img: HTMLImageElement) {
     lap = t2;
   }
 
-  let canvas = document.createElement("canvas");
-  let w = (canvas.width = img.width);
-  let h = (canvas.height = img.height);
-  let ctx = canvas.getContext("2d")!;
-  ctx.drawImage(img, 0, 0);
-  let imdata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let lineartCanvas = document.createElement("canvas");
+  let w = (lineartCanvas.width = img.width);
+  let h = (lineartCanvas.height = img.height);
+  lineartCanvas.getContext("2d")!.drawImage(img, 0, 0);
 
   doLap("create canvas");
 
-  let radius = 100;
-  let distances = calcSdf(canvas, { cutoff: 1, radius });
+  let distances = calcSdf(lineartCanvas, { cutoff: 1, radius });
 
   doLap("calculate SDF");
 
@@ -80,6 +81,10 @@ export function flatter(img: HTMLImageElement) {
   for (let i = 0; i < idxInOrder.length; i++) {
     let { idx, dist } = idxInOrder[i];
 
+    if (dist < gapSize01) {
+      continue; //leave it empty, we'll trim out the lineart gaps last
+    }
+
     let x = idx % w;
     let y = ~~(idx / w);
 
@@ -97,9 +102,7 @@ export function flatter(img: HTMLImageElement) {
       }
     }
 
-    let gapSizePixels = 2;
-    let gapSize = gapSizePixels / radius;
-    let isntUnderGapThreshold = dist > gapSize;
+    let isntUnderGapThreshold = dist > gapSize01;
     let largestIdx = 0;
     for (let ni = 0; ni < foundNeightborCount; ni++) {
       largestIdx = Math.max(largestIdx, foundNeighbors[ni]);
@@ -158,15 +161,29 @@ export function flatter(img: HTMLImageElement) {
   // ok so an untapped benefit of this method is that, because of the SDF, you know what the largest (well, widest) portion of any color is. so you can use that to modify the gap tolerance. big areas can allow larger gap closing, while small ones tolerate less.
   //
 
+  let flatCanvas = document.createElement("canvas");
+  flatCanvas.width = img.width;
+  flatCanvas.height = img.height;
+  let flatCtx = flatCanvas.getContext("2d")!;
+  let flatImgData = flatCtx.getImageData(
+    0,
+    0,
+    flatCanvas.width,
+    flatCanvas.height,
+  );
+
+  let finalColorsUsed: Record<number, true> = {};
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let idx = y * w + x;
       let I = 4 * idx;
       // let paintIdx = idxPainting[y * w + x];
       let paintIdx = getFinalColorIdx(idxPainting[y * w + x]);
-      imdata.data[I + 0] = ~~(rand(paintIdx + 0.1) * 100 + 155);
-      imdata.data[I + 1] = ~~(rand(paintIdx + 0.11) * 100 + 155);
-      imdata.data[I + 2] = ~~(rand(paintIdx + 0.111) * 100 + 155);
+      finalColorsUsed[paintIdx] = true;
+      flatImgData.data[I + 0] = ~~(rand(paintIdx + 0.1) * 100 + 155);
+      flatImgData.data[I + 1] = ~~(rand(paintIdx + 0.11) * 100 + 155);
+      flatImgData.data[I + 2] = ~~(rand(paintIdx + 0.111) * 100 + 155);
+      flatImgData.data[I + 3] = 255;
       // imdata.data[I + 0] = (paintIdx / nextColorIdx) * 255;
       // imdata.data[I + 1] = (paintIdx / nextColorIdx) * 255;
       // imdata.data[I + 2] = (paintIdx / nextColorIdx) * 255;
@@ -178,18 +195,17 @@ export function flatter(img: HTMLImageElement) {
       // imdata.data[I + 3] = 255;
     }
   }
-
-  ctx.putImageData(imdata, 0, 0);
+  flatCtx.putImageData(flatImgData, 0, 0);
 
   doLap("chase down idx remaps and draw image");
 
   // ctx.putImageData(sdfDebugImage, 0, 0);
 
-  // draw the flatted version. actually return both canvases so the user can toggle it
-  ctx.globalCompositeOperation = "multiply";
-  // ctx.drawImage(img, 0, 0);
-
   console.log("done in " + (performance.now() - start) + " total");
+  console.log(
+    "final flats layer contains unique colors: " +
+      Object.keys(finalColorsUsed).length,
+  );
 
-  return canvas;
+  return { flats: flatCanvas, lineArt: lineartCanvas };
 }
