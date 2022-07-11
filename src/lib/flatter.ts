@@ -26,8 +26,9 @@ export function flatter(img: HTMLImageElement) {
   ctx.drawImage(img, 0, 0);
   let imdata = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
+  var radius = 100;
   //calculate distances
-  let distances = calcSdf(canvas, { cutoff: 1, radius: 100 });
+  let distances = calcSdf(canvas, { cutoff: 1, radius });
 
   //show distances
   let imgArr = new Uint8ClampedArray(w * h * 4);
@@ -54,13 +55,11 @@ export function flatter(img: HTMLImageElement) {
     }
   }
 
-  let maxIdx = Math.pow(2, 32);
-
   let idxInOrder = orderBy(idxByDistance, (tup) => -tup[1]);
 
   // memorize times that clumps of pixels meet that should be the same color,
   // so we can merge them efficiently at the very end, instead of having to keep bucket filling them as we go
-  let idxRemap: Record<number, number> = {};
+  let remap: Record<number, number> = {};
 
   let idxPainting = new Uint32Array(w * h);
   let nextColorIdx = 1;
@@ -72,9 +71,8 @@ export function flatter(img: HTMLImageElement) {
     let y = ~~(idx / w);
     let foundNeighbors: number[] = [];
 
-    let rad = 1;
-    for (var ox = -rad; ox <= rad; ox++) {
-      for (var oy = -rad; oy <= rad; oy++) {
+    for (var ox = -1; ox <= 1; ox++) {
+      for (var oy = -1; oy <= 1; oy++) {
         let xx = x + ox;
         let yy = y + oy;
         if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
@@ -86,13 +84,15 @@ export function flatter(img: HTMLImageElement) {
       }
     }
 
-    let gapSize = -0.1;
+    let gapSizePixels = 1;
+    let gapSize = gapSizePixels / radius;
     var isntUnderGapThreshold = dist > gapSize;
     var largestIdx = Math.max(...foundNeighbors);
     if (foundNeighbors.length >= 2 && isntUnderGapThreshold) {
       for (var neightborIdx of foundNeighbors) {
         // by always mapping to a larger idx we can traverse this more efficiently later
-        if (neightborIdx !== largestIdx) idxRemap[neightborIdx] = largestIdx;
+        // if (neightborIdx !== largestIdx) idxRemap[neightborIdx] = largestIdx;
+        mapColorTo(neightborIdx, largestIdx);
       }
     }
 
@@ -109,13 +109,21 @@ export function flatter(img: HTMLImageElement) {
   //   }
   // }
 
+  console.log("remap needed #: " + Object.keys(remap).length);
+
+  // this is tricky, because order can be weird. if we say a color is remapped, we gotta also traverse this data structure to the farthest leaf it's ALREADY possibly been remapped to, or island will not meet correctly all the time
+  function mapColorTo(from: number, to: number) {
+    if (from === to) return;
+    remap[getFinalColorIdx(from)] = getFinalColorIdx(to);
+  }
+
   // we have to recursively look through the replacement idx thing so this memoizes it
   // var finalLookup: Record<number, number> = {};
   function getFinalColorIdx(idx: number): number {
-    if (!idxRemap[idx]) return 0;
+    if (!remap[idx]) return idx;
+    if (remap[idx] === idx) return idx;
 
-    var replace = /*finalLookup[idx] ||*/ idxRemap[idx];
-    return Math.max(getFinalColorIdx(replace) || replace);
+    return getFinalColorIdx(remap[idx]);
   }
 
   for (let y = 0; y < h; y++) {
@@ -125,8 +133,11 @@ export function flatter(img: HTMLImageElement) {
       // let paintIdx = idxPainting[y * w + x];
       let paintIdx = getFinalColorIdx(idxPainting[y * w + x]);
       imdata.data[I + 0] = rand(paintIdx + 0.1) * 127 + 127;
-      imdata.data[I + 1] = rand(paintIdx + 0.2) * 127 + 127;
-      imdata.data[I + 2] = rand(paintIdx + 0.3) * 127 + 127;
+      imdata.data[I + 1] = rand(paintIdx + 0.11) * 127 + 127;
+      imdata.data[I + 2] = rand(paintIdx + 0.111) * 127 + 127;
+      // imdata.data[I + 0] = (paintIdx / nextColorIdx) * 255;
+      // imdata.data[I + 1] = (paintIdx / nextColorIdx) * 255;
+      // imdata.data[I + 2] = (paintIdx / nextColorIdx) * 255;
       imdata.data[I + 3] = 255;
     }
   }
