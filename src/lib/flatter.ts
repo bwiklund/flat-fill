@@ -1,7 +1,8 @@
 import { Vec } from "./vec";
 //@ts-ignore
 import calcSdf from "bitmap-sdf";
-import { orderBy } from "lodash";
+import { orderBy, times } from "lodash";
+import { rand } from "./mutil";
 
 interface Pigment {
   pos: Vec;
@@ -38,14 +39,14 @@ export function flatter(img: HTMLImageElement) {
       imgArr[j * w * 4 + i * 4 + 3] = 255;
     }
   }
-  var sdfDebugImage = new ImageData(imgArr, w, h);
+  let sdfDebugImage = new ImageData(imgArr, w, h);
 
   // do the work, grow the pigments and merge ones that overlap without hitting lines first
 
   // start with the furthest pixels from lines and start filling
   // format is idx, distance
   // TODO this is probably slow and could have a more clever data layout on a native array
-  var idxByDistance: [number, number][] = [];
+  let idxByDistance: [number, number][] = [];
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       const idx = j * w + i;
@@ -53,49 +54,67 @@ export function flatter(img: HTMLImageElement) {
     }
   }
 
-  var maxIdx = Math.pow(2, 32);
+  let maxIdx = Math.pow(2, 32);
 
-  var idxInOrder = orderBy(idxByDistance, (tup) => -tup[1]).map(
-    (tup) => tup[0],
-  );
+  let idxInOrder = orderBy(idxByDistance, (tup) => -tup[1]);
+
+  // memorize times that clumps of pixels meet that should be the same color,
+  // so we can merge them efficiently at the very end, instead of having to keep bucket filling them as we go
+  let sameColorSets: number[][] = [];
 
   let idxPainting = new Uint32Array(w * h);
-  for (var i = 0; i < idxInOrder.length; i++) {
-    // TODO whats a clever cheap way to sample this "randomly" enough but without using memory to do it
-    var idx = idxInOrder[i];
+  let nextColorIdx = 1;
 
-    // is reserved for unvisited idx's
-    var x = idx % w;
-    var y = Math.floor(idx / w);
-    var anyNeighborColor = 0;
-    var found = false;
-    for (var ox = -1; ox <= 1; ox++) {
-      for (var oy = -1; oy <= 1; oy++) {
-        var xx = x + ox;
-        var yy = y + oy;
+  for (var i = 0; i < idxInOrder.length; i++) {
+    let [idx, dist] = idxInOrder[i];
+
+    let x = idx % w;
+    let y = ~~(idx / w);
+    let foundNeighbors: number[] = [];
+
+    let rad = 1;
+    for (var ox = -rad; ox <= rad; ox++) {
+      for (var oy = -rad; oy <= rad; oy++) {
+        let xx = x + ox;
+        let yy = y + oy;
         if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
 
-        var neighborPainted = idxPainting[yy * w + xx];
+        let neighborPainted = idxPainting[yy * w + xx];
         if (neighborPainted !== 0) {
-          anyNeighborColor = neighborPainted;
-          found = true;
-          break; // or do this in a randomized order?
+          foundNeighbors.push(neighborPainted);
         }
       }
-
-      if (found) break;
     }
 
-    idxPainting[idx] = found ? anyNeighborColor : Math.random() * maxIdx;
+    let gapSize = 5;
+    var isntUnderGapThreshold = dist > gapSize;
+    if (foundNeighbors.length >= 2 && isntUnderGapThreshold) {
+      sameColorSets.push(foundNeighbors);
+    }
+
+    // this works for pixels that happen to start next to each other, but we also need a mapping of same colors for groups that collide
+    idxPainting[idx] =
+      foundNeighbors.length > 0 ? foundNeighbors[0] : nextColorIdx++;
+    // idxPainting[idx] = found ? anyNeighborColor : i * maxIdx / idxInOrder.length;
   }
+
+  // let finalColorLookup = times(nextColorIdx).map((n) => n + 1);
+  // for (let set of sameColorSets) {
+  //   var c = set[0];
+  //   for (let idx of set) {
+  //     c = set[idx];
+  //   }
+  // }
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      var idx = y * w + x;
-      var I = 4 * idx;
-      imdata.data[I + 0] = (idxPainting[y * w + x] * 255) / maxIdx;
-      imdata.data[I + 1] = (idxPainting[y * w + x] * 255) / maxIdx;
-      imdata.data[I + 2] = (idxPainting[y * w + x] * 255) / maxIdx;
+      let idx = y * w + x;
+      let I = 4 * idx;
+      let paintIdx = idxPainting[y * w + x];
+      // paintIdx = idxRemap[paintIdx] || paintIdx;
+      imdata.data[I + 0] = rand(paintIdx + 0.1) * 127 + 127;
+      imdata.data[I + 1] = rand(paintIdx + 0.2) * 127 + 127;
+      imdata.data[I + 2] = rand(paintIdx + 0.3) * 127 + 127;
       imdata.data[I + 3] = 255;
     }
   }
