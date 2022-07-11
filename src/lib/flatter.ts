@@ -1,4 +1,4 @@
-import { Vec } from "./vec";
+import { mag, vec, Vec } from "./vec";
 //@ts-ignore
 import calcSdf from "bitmap-sdf";
 import { orderBy, times } from "lodash";
@@ -26,7 +26,7 @@ export function flatter(img: HTMLImageElement) {
   ctx.drawImage(img, 0, 0);
   let imdata = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-  var radius = 100;
+  let radius = 100;
   //calculate distances
   let distances = calcSdf(canvas, { cutoff: 1, radius });
 
@@ -64,15 +64,15 @@ export function flatter(img: HTMLImageElement) {
   let idxPainting = new Uint32Array(w * h);
   let nextColorIdx = 1;
 
-  for (var i = 0; i < idxInOrder.length; i++) {
+  for (let i = 0; i < idxInOrder.length; i++) {
     let [idx, dist] = idxInOrder[i];
 
     let x = idx % w;
     let y = ~~(idx / w);
     let foundNeighbors: number[] = [];
 
-    for (var ox = -1; ox <= 1; ox++) {
-      for (var oy = -1; oy <= 1; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
         let xx = x + ox;
         let yy = y + oy;
         if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
@@ -84,12 +84,12 @@ export function flatter(img: HTMLImageElement) {
       }
     }
 
-    let gapSizePixels = 1;
+    let gapSizePixels = 3;
     let gapSize = gapSizePixels / radius;
-    var isntUnderGapThreshold = dist > gapSize;
-    var largestIdx = Math.max(...foundNeighbors);
+    let isntUnderGapThreshold = dist > gapSize;
+    let largestIdx = Math.max(...foundNeighbors);
     if (foundNeighbors.length >= 2 && isntUnderGapThreshold) {
-      for (var neightborIdx of foundNeighbors) {
+      for (let neightborIdx of foundNeighbors) {
         // by always mapping to a larger idx we can traverse this more efficiently later
         // if (neightborIdx !== largestIdx) idxRemap[neightborIdx] = largestIdx;
         mapColorTo(neightborIdx, largestIdx);
@@ -103,7 +103,7 @@ export function flatter(img: HTMLImageElement) {
 
   // let finalColorLookup = times(nextColorIdx).map((n) => n + 1);
   // for (let set of sameColorSets) {
-  //   var c = set[0];
+  //   let c = set[0];
   //   for (let idx of set) {
   //     c = set[idx];
   //   }
@@ -118,7 +118,7 @@ export function flatter(img: HTMLImageElement) {
   }
 
   // we have to recursively look through the replacement idx thing so this memoizes it
-  // var finalLookup: Record<number, number> = {};
+  // let finalLookup: Record<number, number> = {};
   function getFinalColorIdx(idx: number): number {
     if (!remap[idx]) return idx;
     if (remap[idx] === idx) return idx;
@@ -126,19 +126,35 @@ export function flatter(img: HTMLImageElement) {
     return getFinalColorIdx(remap[idx]);
   }
 
+  // let finalIdxToRealColor: Record<number, number> = [];
+  // for (let y = 0; y < h; y++) {
+  //   for (let x = 0; x < w; x++) {
+  //     let paintIdx = getFinalColorIdx(idxPainting[y * w + x]);
+  //     finalIdxToRealColor[paintIdx] = Math.max(
+  //       finalIdxToRealColor[paintIdx] || 0,
+  //       Math.sqrt(1 - mag(vec(x - w / 2, y)) / (w + h)),
+  //     );
+  //   }
+  // }
+
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let idx = y * w + x;
       let I = 4 * idx;
       // let paintIdx = idxPainting[y * w + x];
       let paintIdx = getFinalColorIdx(idxPainting[y * w + x]);
-      imdata.data[I + 0] = rand(paintIdx + 0.1) * 127 + 127;
-      imdata.data[I + 1] = rand(paintIdx + 0.11) * 127 + 127;
-      imdata.data[I + 2] = rand(paintIdx + 0.111) * 127 + 127;
+      imdata.data[I + 0] = rand(paintIdx + 0.1) * 100 + 155;
+      imdata.data[I + 1] = rand(paintIdx + 0.11) * 100 + 155;
+      imdata.data[I + 2] = rand(paintIdx + 0.111) * 100 + 155;
       // imdata.data[I + 0] = (paintIdx / nextColorIdx) * 255;
       // imdata.data[I + 1] = (paintIdx / nextColorIdx) * 255;
       // imdata.data[I + 2] = (paintIdx / nextColorIdx) * 255;
-      imdata.data[I + 3] = 255;
+
+      // let clr = finalIdxToRealColor[paintIdx];
+      // imdata.data[I + 0] = clr * 255;
+      // imdata.data[I + 1] = clr * 255;
+      // imdata.data[I + 2] = clr * 255;
+      // imdata.data[I + 3] = 255;
     }
   }
 
