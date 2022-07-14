@@ -43,44 +43,10 @@ export function flatter(img: HTMLImageElement) {
   doLap("create canvases");
 
   let distances = calcSdf(lineartCanvas, { cutoff: 1, radius });
-  let distancesInverse = calcSdf(inverseLineArtCanvas, { cutoff: 1, radius });
 
   doLap("calculate SDF");
 
-  //show distances
-  // let imgArr = new Uint8ClampedArray(w * h * 4);
-  // for (let j = 0; j < h; j++) {
-  //   for (let i = 0; i < w; i++) {
-  //     imgArr[j * w * 4 + i * 4 + 0] = distances[j * w + i] * 255;
-  //     imgArr[j * w * 4 + i * 4 + 1] = distances[j * w + i] * 255;
-  //     imgArr[j * w * 4 + i * 4 + 2] = distances[j * w + i] * 255;
-  //     imgArr[j * w * 4 + i * 4 + 3] = 255;
-  //   }
-  // }
-  // let sdfDebugImage = new ImageData(imgArr, w, h);
-
-  // do the work, grow the pigments and merge ones that overlap without hitting lines first
-
-  // start with the furthest pixels from lines and start filling
-  // format is idx, distance
-  // TODO this is probably slow and could have a more clever data layout on a native array
-  let idxByDistance: { idx: number; dist: number }[] = [];
-  for (let j = 0; j < h; j++) {
-    for (let i = 0; i < w; i++) {
-      const idx = j * w + i;
-      idxByDistance.push({ idx, dist: distances[idx] });
-    }
-  }
-
-  doLap("gather pixels");
-
-  // the native, in place method is about 2x speedup, and this is the slowest part of the algo atm
-  // let idxInOrder = orderBy(idxByDistance, (tup) => -tup.dist);
-  let idxInOrder = idxByDistance.sort((a, b) =>
-    a.dist < b.dist ? 1 : a.dist > b.dist ? -1 : 0,
-  );
-
-  doLap("sort pixels by SDF distance");
+  var idxInOrder = getSortedPixels(distances);
 
   // memorize times that clumps of pixels meet that should be the same color,
   // so we can merge them efficiently at the very end, instead of having to keep bucket filling them as we go
@@ -130,6 +96,58 @@ export function flatter(img: HTMLImageElement) {
 
     // this works for pixels that happen to start next to each other, but we also need a mapping of same colors for groups that collide
     idxPainting[idx] = foundNeightborCount > 0 ? largestIdx : nextColorIdx++;
+    // idxPainting[idx] = found ? anyNeighborColor : i * maxIdx / idxInOrder.length;
+  }
+
+  let gapCanvas = getGapCanvas(idxPainting, w, h);
+  let distancesInverse = calcSdf(gapCanvas, {
+    cutoff: 1,
+    radius,
+  });
+  var idxInOrderInv = getSortedPixels(distancesInverse).reverse();
+
+  for (let i = 0; i < idxInOrderInv.length; i++) {
+    let { idx, dist } = idxInOrderInv[i];
+
+    // if (dist < gapSize01) {
+    //   continue; //leave it empty, we'll trim out the lineart gaps last
+    // }
+    if (dist <= 0) {
+      continue; //leave it empty, we'll trim out the lineart gaps last
+    }
+
+    let x = idx % w;
+    let y = ~~(idx / w);
+
+    let foundNeightborCount = 0;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        let xx = x + ox;
+        let yy = y + oy;
+        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
+
+        let neighborPainted = idxPainting[yy * w + xx];
+        if (neighborPainted !== 0) {
+          foundNeighbors[foundNeightborCount++] = neighborPainted;
+        }
+      }
+    }
+
+    let isntUnderGapThreshold = dist > gapSize01;
+    let largestIdx = 0;
+    for (let ni = 0; ni < foundNeightborCount; ni++) {
+      largestIdx = Math.max(largestIdx, foundNeighbors[ni]);
+    }
+    if (foundNeightborCount >= 2 && isntUnderGapThreshold) {
+      for (let ni = 0; ni < foundNeightborCount; ni++) {
+        // by always mapping to a larger idx we can traverse this more efficiently later
+        // if (neightborIdx !== largestIdx) idxRemap[neightborIdx] = largestIdx;
+        // mapColorTo(foundNeighbors[ni], largestIdx);
+      }
+    }
+
+    // this works for pixels that happen to start next to each other, but we also need a mapping of same colors for groups that collide
+    idxPainting[idx] = largestIdx;
     // idxPainting[idx] = found ? anyNeighborColor : i * maxIdx / idxInOrder.length;
   }
 
@@ -207,12 +225,70 @@ function threshold(
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       var I = 4 * (j * w + i);
-      var thresh = invData.data[I]; // red good enough
-      invData.data[I + 0] = thresh > threshold !== flip ? 255 : 0;
-      invData.data[I + 1] = thresh > threshold !== flip ? 255 : 0;
-      invData.data[I + 2] = thresh > threshold !== flip ? 255 : 0;
-      invData.data[I + 3] = 255;
+      var thresh = data[I]; // red good enough
+      // eslint-disable-next-line
+      var isThresh = thresh > threshold !== flip;
+      data[I + 0] = isThresh ? 255 : 0;
+      data[I + 1] = isThresh ? 255 : 0;
+      data[I + 2] = isThresh ? 255 : 0;
+      data[I + 3] = 255;
     }
   }
   invCtx.putImageData(invData, 0, 0);
+}
+
+// turn our colored in image into an image with the lines as white so we can close gaps. kinda wasteful atm
+function getGapCanvas(
+  arr: Uint32Array,
+  w: number,
+  h: number,
+): HTMLCanvasElement {
+  let canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  let ctx = canvas.getContext("2d")!;
+  let id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  var data = id.data;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      var idx = j * w + i;
+      var I = 4 * idx;
+      // eslint-disable-next-line
+      var isGap = arr[idx] == 0;
+      data[I + 0] = isGap ? 255 : 0;
+      data[I + 1] = isGap ? 255 : 0;
+      data[I + 2] = isGap ? 255 : 0;
+      data[I + 3] = 255;
+    }
+  }
+  ctx.putImageData(id, 0, 0);
+
+  return canvas;
+}
+
+function getSortedPixels(distances: any) {
+  let start = performance.now();
+  let lap = start;
+
+  function doLap(str: string) {
+    let t2 = performance.now();
+    console.log(str + " " + (t2 - lap));
+    lap = t2;
+  }
+
+  let idxByDistance: { idx: number; dist: number }[] = [];
+  for (let idx = 0; idx < distances.length; idx++) {
+    idxByDistance.push({ idx, dist: distances[idx] });
+  }
+
+  doLap("gather pixels");
+
+  // the native, in place method is about 2x speedup, and this is the slowest part of the algo atm
+  // let idxInOrder = orderBy(idxByDistance, (tup) => -tup.dist);
+  let idxInOrder = idxByDistance.sort((a, b) =>
+    a.dist < b.dist ? 1 : a.dist > b.dist ? -1 : 0,
+  );
+  doLap("sort pixels by SDF distance");
+
+  return idxInOrder;
 }
