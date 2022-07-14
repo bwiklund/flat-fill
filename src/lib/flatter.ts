@@ -1,5 +1,6 @@
 //@ts-ignore
 import calcSdf from "bitmap-sdf";
+import { sample } from "lodash";
 import { rand } from "./mutil";
 
 // strategy:
@@ -42,7 +43,19 @@ export function flatter(img: HTMLImageElement) {
 
   doLap("create canvases");
 
-  let distances = calcSdf(lineartCanvas, { cutoff: 1, radius });
+  let distances = calcSdf(lineartCanvas, {
+    cutoff: 1,
+    radius,
+  });
+  let distancesInverse = calcSdf(inverseLineArtCanvas, {
+    cutoff: 1,
+    radius,
+  });
+  // make the inside of lines negative, by overlaying these sdfs with the inverse one flipped
+  for (var i = 0; i < distances.length; i++) {
+    distances[i] =
+      distances[i] > 0 ? distances[i] : -0.00001 - distancesInverse[i];
+  }
 
   doLap("calculate SDF");
 
@@ -60,95 +73,62 @@ export function flatter(img: HTMLImageElement) {
   for (let i = 0; i < idxInOrder.length; i++) {
     let { idx, dist } = idxInOrder[i];
 
-    if (dist < gapSize01) {
-      continue; //leave it empty, we'll trim out the lineart gaps last
-    }
-
-    let x = idx % w;
-    let y = ~~(idx / w);
-
-    let foundNeightborCount = 0;
-    for (let ox = -1; ox <= 1; ox++) {
-      for (let oy = -1; oy <= 1; oy++) {
-        let xx = x + ox;
-        let yy = y + oy;
-        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-
-        let neighborPainted = idxPainting[yy * w + xx];
-        if (neighborPainted !== 0) {
-          foundNeighbors[foundNeightborCount++] = neighborPainted;
-        }
-      }
-    }
-
-    let isntUnderGapThreshold = dist > gapSize01;
-    let largestIdx = 0;
-    for (let ni = 0; ni < foundNeightborCount; ni++) {
-      largestIdx = Math.max(largestIdx, foundNeighbors[ni]);
-    }
-    if (foundNeightborCount >= 2 && isntUnderGapThreshold) {
-      for (let ni = 0; ni < foundNeightborCount; ni++) {
-        // by always mapping to a larger idx we can traverse this more efficiently later
-        // if (neightborIdx !== largestIdx) idxRemap[neightborIdx] = largestIdx;
-        mapColorTo(foundNeighbors[ni], largestIdx);
-      }
-    }
-
-    // this works for pixels that happen to start next to each other, but we also need a mapping of same colors for groups that collide
-    idxPainting[idx] = foundNeightborCount > 0 ? largestIdx : nextColorIdx++;
-    // idxPainting[idx] = found ? anyNeighborColor : i * maxIdx / idxInOrder.length;
-  }
-
-  let gapCanvas = getGapCanvas(idxPainting, w, h);
-  let distancesInverse = calcSdf(gapCanvas, {
-    cutoff: 1,
-    radius,
-  });
-  var idxInOrderInv = getSortedPixels(distancesInverse).reverse();
-
-  for (let i = 0; i < idxInOrderInv.length; i++) {
-    let { idx, dist } = idxInOrderInv[i];
-
     // if (dist < gapSize01) {
+    // if (dist < 0) {
     //   continue; //leave it empty, we'll trim out the lineart gaps last
     // }
-    if (dist <= 0) {
-      continue; //leave it empty, we'll trim out the lineart gaps last
-    }
+    let isInSpaceBetweenLines = true; // dist > gapSize01;
 
     let x = idx % w;
     let y = ~~(idx / w);
 
     let foundNeightborCount = 0;
+
+    let highestSdfNeighborDist = dist;
+    let highestSdfNeighborIdx = 0;
+
     for (let ox = -1; ox <= 1; ox++) {
       for (let oy = -1; oy <= 1; oy++) {
         let xx = x + ox;
         let yy = y + oy;
         if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
 
-        let neighborPainted = idxPainting[yy * w + xx];
+        let nIdx = yy * w + xx;
+
+        // TODO fix weighting for DX/Y on edges
+        var nDist = distances[nIdx];
+        // note that because of the order of pixel evaluation, this HAS to be uphill from us
+        if (nDist > highestSdfNeighborDist) {
+          highestSdfNeighborDist = nDist;
+          highestSdfNeighborIdx = nIdx;
+        }
+
+        // if a neightbor is <= zero sdf, we're at a line
+        if (nDist <= 0) isInSpaceBetweenLines = false;
+
+        let neighborPainted = idxPainting[nIdx];
         if (neighborPainted !== 0) {
           foundNeighbors[foundNeightborCount++] = neighborPainted;
         }
       }
     }
 
-    let isntUnderGapThreshold = dist > gapSize01;
-    let largestIdx = 0;
-    for (let ni = 0; ni < foundNeightborCount; ni++) {
-      largestIdx = Math.max(largestIdx, foundNeighbors[ni]);
-    }
-    if (foundNeightborCount >= 2 && isntUnderGapThreshold) {
+    if (isInSpaceBetweenLines) {
+      let largestIdx = 0;
       for (let ni = 0; ni < foundNeightborCount; ni++) {
-        // by always mapping to a larger idx we can traverse this more efficiently later
-        // if (neightborIdx !== largestIdx) idxRemap[neightborIdx] = largestIdx;
-        // mapColorTo(foundNeighbors[ni], largestIdx);
+        largestIdx = Math.max(largestIdx, foundNeighbors[ni]);
       }
+      if (isInSpaceBetweenLines && foundNeightborCount >= 2) {
+        for (let ni = 0; ni < foundNeightborCount; ni++) {
+          // by always mapping to a larger idx we can traverse this more efficiently later
+          mapColorTo(foundNeighbors[ni], largestIdx);
+        }
+      }
+      idxPainting[idx] = foundNeightborCount > 0 ? largestIdx : nextColorIdx++;
+    } else {
+      var uphillColor = idxPainting[highestSdfNeighborIdx];
+      idxPainting[idx] = uphillColor;
     }
-
-    // this works for pixels that happen to start next to each other, but we also need a mapping of same colors for groups that collide
-    idxPainting[idx] = largestIdx;
-    // idxPainting[idx] = found ? anyNeighborColor : i * maxIdx / idxInOrder.length;
   }
 
   doLap("traverse all pixels");
